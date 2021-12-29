@@ -1,16 +1,11 @@
-cmake_minimum_required(VERSION 3.1)
+cmake_minimum_required(VERSION 3.16)
 
-project(libobjc C ASM CXX)
+project(libobjc C ASM CXX OBJC OBJCXX)
 
 INCLUDE (CheckCXXSourceCompiles)
 
-set(CMAKE_C_FLAGS_DEBUG "-O0 -Xclang -fno-inline ${CMAKE_C_FLAGS_DEBUG}")
-set(CMAKE_C_FLAGS_RELEASE "-O3 ${CMAKE_C_FLAGS_RELEASE}")
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
-
 set(libobjc_VERSION 4.6)
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Xclang -fexceptions -Xclang -fobjc-exceptions")
 if (MSVC)
 	set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /EHas")
 	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /EHas")
@@ -20,7 +15,7 @@ if (MSVC)
 	set(objc_LINK_FLAGS "/DEBUG /INCREMENTAL:NO ${objc_LINK_FLAGS}")
 endif()
 # Build configuration
-add_definitions( -DGNUSTEP -D__OBJC_RUNTIME_INTERNAL__=1)
+add_compile_definitions(GNUSTEP __OBJC_RUNTIME_INTERNAL__=1)
 
 set(CMAKE_CXX_STANDARD 14)
 
@@ -44,6 +39,7 @@ set(libobjc_C_SRCS
 	class_table.c
 	dtable.c
 	encoding2.c
+	gc_none.c
 	hooks.c
 	ivar.c
 	loader.c
@@ -94,47 +90,6 @@ if (NOT EXISTS "${CMAKE_SOURCE_DIR}/third_party/robin-map/include/tsl/robin_map.
 						"https://github.com/Tessil/robin-map/")
 endif ()
 
-# For release builds, we disable spamming the terminal with warnings about
-# selector type mismatches
-if (CMAKE_BUILD_TYPE STREQUAL Release)
-	add_definitions(-DNO_SELECTOR_MISMATCH_WARNINGS)
-else ()
-	add_definitions(-DGC_DEBUG)
-endif ()
-
-set(TYPE_DEPENDENT_DISPATCH TRUE CACHE BOOL
-	"Enable type-dependent dispatch")
-if (TYPE_DEPENDENT_DISPATCH)
-	add_definitions(-DTYPE_DEPENDENT_DISPATCH)
-endif ()
-set(ENABLE_TRACING FALSE CACHE BOOL
-	"Enable tracing support (slower, not recommended for deployment)")
-if (ENABLE_TRACING)
-	add_definitions(-DWITH_TRACING=1)
-endif (ENABLE_TRACING)
-
-set(BOEHM_GC FALSE CACHE BOOL
-	"Enable garbage collection support (not recommended)")
-if (BOEHM_GC)
-	include(FindPkgConfig)
-	pkg_check_modules(GC REQUIRED bdw-gc)
-	link_directories(${GC_LIBRARY_DIRS})
-	# If there's a threaded version, use it
-	find_library(LIBGC gc-threaded PATHS "${GC_LIBRARY_DIRS}")
-	if (LIBGC)
-	else ()
-		find_library(LIBGC gc PATHS GC_LIBRARY_DIRS)
-	endif ()
-	message(STATUS "Using Boehm GC library: ${LIBGC}")
-	include_directories(GC_INCLUDE_DIRS)
-	set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${GC_CFLAGS}")
-	set(CMAKE_OBJC_FLAGS "${CMAKE_OBJC_FLAGS} -fobjc-gc")
-	set(objc_LINK_FLAGS "${objc_LINK_FLAGS} ${GC_CFLAGS}")
-	add_definitions(-DENABLE_GC)
-	list(APPEND libobjc_OBJC_SRCS gc_boehm.c)
-else ()
-	list(APPEND libobjc_OBJC_SRCS gc_none.c)
-endif ()
 
 if (WIN32)
 	set(OLD_ABI_COMPAT_DEFAULT false)
@@ -142,18 +97,24 @@ else()
 	set(OLD_ABI_COMPAT_DEFAULT true)
 endif()
 
-set(OLDABI_COMPAT ${OLD_ABI_COMPAT_DEFAULT} CACHE BOOL
-	"Enable compatibility with GCC and old GNUstep ABIs")
+option(TYPE_DEPENDENT_DISPATCH "Enable type-dependent dispatch" ON)
+option(ENABLE_TRACING 
+	"Enable tracing support (slower, not recommended for deployment)" OFF)
+option(OLDABI_COMPAT 
+	"Enable compatibility with GCC and old GNUstep ABIs"
+	${OLD_ABI_COMPAT_DEFAULT})
+option(LEGACY_COMPAT "Enable legacy compatibility features" OFF)
+option(DEBUG_ARC_COMPAT
+	"Log warnings for classes that don't hit ARC fast paths" OFF)
+option(ENABLE_OBJCXX "Enable support for Objective-C++" ON)
 
-set(LEGACY_COMPAT FALSE CACHE BOOL
-	"Enable legacy compatibility features")
 
-set(DEBUG_ARC_COMPAT FALSE CACHE BOOL
-	"Log warnings for classes that don't hit ARC fast paths")
-
-if (DEBUG_ARC_COMPAT)
-	add_definitions(-DDEBUG_ARC_COMPAT)
-endif()
+# For release builds, we disable spamming the terminal with warnings about
+# selector type mismatches
+add_compile_definitions($<$<CONFIG:Release>:NO_SELECTOR_MISMATCH_WARNINGS>)
+add_compile_definitions($<$<BOOL:${TYPE_DEPENDENT_DISPATCH}>:TYPE_DEPENDENT_DISPATCH>)
+add_compile_definitions($<$<BOOL:${ENABLE_TRACING}>:WITH_TRACING=1>)
+add_compile_definitions($<$<BOOL:${DEBUG_ARC_COMPAT}>:DEBUG_ARC_COMPAT>)
 
 if (OLDABI_COMPAT)
 	list(APPEND libobjc_C_SRCS legacy.c abi_version.c statics_loader.c)
@@ -172,19 +133,13 @@ set(LIBOBJC_NAME "objc" CACHE STRING
 set(INCLUDE_DIRECTORY "objc" CACHE STRING 
 	"Subdirectory of the include path to install the headers.")
 
-
 if (${CMAKE_C_COMPILER_ID} MATCHES Clang*)
-	set(CMAKE_OBJC_FLAGS "${CMAKE_OBJC_FLAGS} -Wno-deprecated-objc-isa-usage -Wno-objc-root-class")
-	if (${CMAKE_C_COMPILER_VERSION} VERSION_GREATER 3.1)
-		set(CMAKE_OBJC_FLAGS "${CMAKE_OBJC_FLAGS} -fobjc-runtime=gnustep-2.0")
-	endif ()
 else (${CMAKE_C_COMPILER_ID} MATCHES Clang*)
 	MESSAGE("WARNING: It is strongly recommended that you compile with clang")
 endif (${CMAKE_C_COMPILER_ID} MATCHES Clang*)
 
-if (${CMAKE_SYSTEM_PROCESSOR} STREQUAL "i686")
-	set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -march=i586")
-endif ()
+add_compile_options("$<$<OR:$<COMPILE_LANGUAGE:OBJC>,$<COMPILE_LANGUAGE:OBJCXX>>:-Wno-deprecated-objc-isa-usage;-Wno-objc-root-class;-fobjc-runtime=gnustep-2.0>$<$<COMPILE_LANGUAGE:C>:-Xclang;-fexceptions>")
+add_compile_options($<$<STREQUAL:${CMAKE_SYSTEM_PROCESSOR},i686>:-march=i586>)
 
 set(INSTALL_TARGETS objc)
 
@@ -193,29 +148,6 @@ set(INSTALL_TARGETS objc)
 # unconditionally (which means that it still defaults to C for .c files).
 set(ENV{CCC_OVERRIDE_OPTIONS} "x/TC x/Gm-")
 
-set_source_files_properties(
-	${libobjc_ASM_SRCS}
-	LANGUAGE C
-	COMPILE_FLAGS "${CMAKE_OBJC_FLAGS} -Xclang -x -Xclang assembler-with-cpp"
-)
-
-set_source_files_properties(
-	${libobjc_CXX_SRCS}
-	LANGUAGE CXX
-	COMPILE_FLAGS "${CMAKE_CXX_FLAGS}"
-)
-
-set_source_files_properties(
-	${libobjc_OBJC_SRCS}
-	COMPILE_FLAGS "${CMAKE_OBJC_FLAGS} -Xclang -x -Xclang objective-c"
-)
-
-set_source_files_properties(
-	${libobjc_OBJCXX_SRCS}
-	COMPILE_FLAGS "${CMAKE_OBJC_FLAGS} -Xclang -x -Xclang objective-c++"
-)
-
-
 #
 # C++ Runtime interaction
 #
@@ -223,7 +155,7 @@ set_source_files_properties(
 
 function(test_cxx CXX_RUNTIME_NAME IS_STDLIB)
 	set(CXX_RUNTIME_NAME_FULL "${CMAKE_SHARED_LIBRARY_PREFIX}${CXX_RUNTIME_NAME}${CMAKE_SHARED_LIBRARY_SUFFIX}")
-	find_library(CXX_RUNTIME_LIB NAMES ${CXX_RUNTIME_NAME_FULL} ${CXX_RUNTIME_NAME})
+	find_library(CXX_RUNTIME_LIB NAMES ${CXX_RUNTIME_NAME_FULL})
 	if (CXX_RUNTIME_LIB)
 		message(STATUS "Testing ${CXX_RUNTIME_LIB} as the C++ runtime library")
 		if (ANDROID)
@@ -243,8 +175,6 @@ function(test_cxx CXX_RUNTIME_NAME IS_STDLIB)
 	endif()
 endfunction()
 
-set(ENABLE_OBJCXX true CACHE BOOL
-	"Enable support for Objective-C++")
 
 set(CXXRT_IS_STDLIB false)
 
@@ -322,10 +252,10 @@ if (ENABLE_OBJCXX)
 		if (CMAKE_CXX_COMPILER_TARGET)
 			list(APPEND EH_PERSONALITY_FLAGS "${CMAKE_CXX_COMPILE_OPTIONS_TARGET}${CMAKE_CXX_COMPILER_TARGET}")
 		endif ()
-		add_custom_command(OUTPUT eh_trampoline.s
-			COMMAND ${CMAKE_CXX_COMPILER} ARGS ${EH_PERSONALITY_FLAGS} -fPIC -S "${CMAKE_SOURCE_DIR}/eh_trampoline.cc" -o - -fexceptions -fno-inline | sed "s/__gxx_personality_v0/test_eh_personality/g" > "${CMAKE_BINARY_DIR}/eh_trampoline.s"
+		add_custom_command(OUTPUT eh_trampoline.S
+			COMMAND ${CMAKE_CXX_COMPILER} ARGS ${EH_PERSONALITY_FLAGS} -fPIC -S "${CMAKE_SOURCE_DIR}/eh_trampoline.cc" -o - -fexceptions -fno-inline | sed "s/__gxx_personality_v0/test_eh_personality/g" > "${CMAKE_BINARY_DIR}/eh_trampoline.S"
 			MAIN_DEPENDENCY eh_trampoline.cc)
-		list(APPEND libobjc_ASM_SRCS eh_trampoline.s)
+		list(APPEND libobjc_ASM_SRCS eh_trampoline.S)
 		list(APPEND libobjc_CXX_SRCS objcxx_eh.cc)
 
 		# Find libm for linking, as some versions of libc++ don't link against it
@@ -348,14 +278,8 @@ else()
 	add_definitions(-DNO_OBJCXX)
 endif()
 
-
-# Currently, we actually need pthreads, but we should use the platform's native
-# threading implementation (we do for everything except thread-local storage)
-set(CMAKE_THREAD_PREFER_PTHREAD)
 include(FindThreads)
 target_link_libraries(objc Threads::Threads)
-
-
 
 
 set_target_properties(objc PROPERTIES
@@ -367,19 +291,13 @@ set_target_properties(objc PROPERTIES
 
 set_property(TARGET PROPERTY NO_SONAME true)
 
-set(BUILD_STATIC_LIBOBJC false CACHE BOOL
-	"Build the static version of libobjc")
+option(BUILD_STATIC_LIBOBJC "Build the static version of libobjc" OFF)
 if (BUILD_STATIC_LIBOBJC)
 	add_library(objc-static STATIC ${libobjc_C_SRCS} ${libobjc_ASM_SRCS} ${libobjc_OBJC_SRCS} ${libobjc_CXX_SRCS})
 	set_target_properties(objc-static PROPERTIES
 		POSITION_INDEPENDENT_CODE true
 		OUTPUT_NAME ${LIBOBJC_NAME})
 	list(APPEND INSTALL_TARGETS objc-static)
-endif ()
-
-# Explicitly link libgc if we are compiling with gc support.
-if (LIBGC)
-	target_link_libraries(objc ${LIBGC})
 endif ()
 
 # Explicitly link libm, as an implicit dependency of the C++ runtime
@@ -455,7 +373,7 @@ set(CPACK_PACKAGE_VENDOR "The GNUstep Project")
 set(CPACK_PACKAGE_DESCRIPTION_FILE "${CMAKE_CURRENT_SOURCE_DIR}/README.md")
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/COPYING")
 set(CPACK_PACKAGE_VERSION_MAJOR "2")
-set(CPACK_PACKAGE_VERSION_MINOR "0")
+set(CPACK_PACKAGE_VERSION_MINOR "2")
 set(CPACK_PACKAGE_VERSION_PATCH "0")
 set(CPACK_PACKAGE_CONTACT "GNUstep Developer <gnustep-dev@gnu.org>")
 set(CPACK_PACKAGE_INSTALL_DIRECTORY "CMake ${CMake_VERSION_MAJOR}.${CMake_VERSION_MINOR}")
@@ -466,9 +384,6 @@ include (CPack)
 
 # pkg-config descriptor
 
-if (BOEHM_GC)
-	set(PC_REQUIRES_PRIVATE_BOEHM_GC "Requires.private: bdw-gc")
-endif ()
 if (ENABLE_OBJCXX)
 	if (CXXRT_IS_STDLIB)
 		set(PC_LIBS_PRIVATE ${CMAKE_CXX_IMPLICIT_LINK_LIBRARIES})
@@ -516,8 +431,4 @@ CHECK_CXX_SOURCE_COMPILES("
 	#include <exception>
 	int main() { return 0; }" CXA_ALLOCATE_EXCEPTION_NOEXCEPT_COMPILES)
 
-if (CXA_ALLOCATE_EXCEPTION_NOEXCEPT_COMPILES)
-	add_definitions(-DCXA_ALLOCATE_EXCEPTION_SPECIFIER=noexcept)
-else ()
-	add_definitions(-DCXA_ALLOCATE_EXCEPTION_SPECIFIER=)
-endif ()
+add_compile_definitions($<IF:$<BOOL:${CXA_ALLOCATE_EXCEPTION_NOEXCEPT_COMPILES}>,CXA_ALLOCATE_EXCEPTION_SPECIFIER=noexcept,CXA_ALLOCATE_EXCEPTION_SPECIFIER>)
