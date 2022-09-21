@@ -23,6 +23,7 @@ set(TESTS
 	AssociatedObject2.m
 	BlockImpTest.m
 	BlockTest_arc.m
+	ClassMethods_arc.m
 	ConstantString.m
 	Category.m
 	ExceptionTest.m
