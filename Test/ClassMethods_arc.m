@@ -16,7 +16,7 @@ __attribute__((objc_root_class))
 	return self;
 }
 + (id)testObj {
-	id testObj = @"Test";
+	id testObj = @"TestWithAVeryLongStringThatWillBeNoCandidateForShortStringOptimization";
 	printf("returning testObj: 0x%p\n", testObj);
 	return testObj;
 }
