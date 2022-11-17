@@ -4,6 +4,7 @@
 #undef NDEBUG
 #endif
 #include <assert.h>
+#include <stdio.h>
 #include "Test.h"
 
 @implementation NSConstantString
@@ -33,14 +34,23 @@
 @end
 
 @implementation Test
+static int Instances;
++ (int)instances
+{
+    return Instances;
+}
 + (Class)class { return self; }
 + (id)new
 {
+	Instances += 1;
+	printf("Create instance\n");
 	return class_createInstance(self, 0);
 }
 - (void)dealloc
 {
 	object_dispose(self);
+	printf("Destroy instance\n");
+	Instances -= 1;
 }
 - (id)autorelease
 {
